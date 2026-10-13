@@ -412,6 +412,8 @@ namespace Ink_Canvas
                     });
                 })).Start();
             });
+
+            RestoreTopmostAfterPptTransition("slide show begin");
         }
 
         bool isEnteredSlideShowEndEvent = false; //防止重复调用本函数导致墨迹保存失效
@@ -524,8 +526,66 @@ namespace Ink_Canvas
                 }
             });
 
+            RestoreTopmostAfterPptTransition("slide show end");
+
             await Task.Delay(150);
             ViewboxFloatingBarMarginAnimation();
+        }
+
+        private const uint SwpNoSize = 0x0001;
+        private const uint SwpNoMove = 0x0002;
+        private const uint SwpNoActivate = 0x0010;
+        private const uint SwpNoOwnerZOrder = 0x0200;
+        private static readonly IntPtr HwndTopmost = new IntPtr(-1);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool SetWindowPos(
+            IntPtr hWnd,
+            IntPtr hWndInsertAfter,
+            int x,
+            int y,
+            int cx,
+            int cy,
+            uint uFlags);
+
+        private async void RestoreTopmostAfterPptTransition(string reason)
+        {
+            await Task.Delay(300);
+            try
+            {
+                await Dispatcher.InvokeAsync(() =>
+                {
+                    if (!IsLoaded || !IsVisible || currentMode != 0)
+                    {
+                        LogHelper.WriteLogToFile(
+                            $"PPT topmost restore skipped ({reason}): IsLoaded={IsLoaded}, IsVisible={IsVisible}, currentMode={currentMode}",
+                            LogHelper.LogType.Event);
+                        return;
+                    }
+
+                    var wasTopmost = Topmost;
+                    Topmost = true;
+                    var hwnd = new System.Windows.Interop.WindowInteropHelper(this).Handle;
+                    var success = hwnd != IntPtr.Zero && SetWindowPos(
+                        hwnd,
+                        HwndTopmost,
+                        0,
+                        0,
+                        0,
+                        0,
+                        SwpNoSize | SwpNoMove | SwpNoActivate | SwpNoOwnerZOrder);
+                    var error = success ? 0 : Marshal.GetLastWin32Error();
+
+                    LogHelper.WriteLogToFile(
+                        $"PPT topmost restore ({reason}): hwnd=0x{hwnd.ToInt64():X}, currentMode={currentMode}, Topmost={wasTopmost}->{Topmost}, SetWindowPos={success}, Win32Error={error}",
+                        success ? LogHelper.LogType.Event : LogHelper.LogType.Error);
+                });
+            }
+            catch (Exception ex)
+            {
+                LogHelper.WriteLogToFile($"PPT topmost restore failed ({reason}): {ex}", LogHelper.LogType.Error);
+            }
         }
 
         int previousSlideID = 0;
